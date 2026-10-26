@@ -1,0 +1,46 @@
+<!-- windows_rules.xml — Windows endpoint escalation rules for Wazuh 4.x.
+     https://github.com/secopsxsaiyan/wazuh-windows
+
+     Authored after a pentest-visibility audit: a managed Windows host generated NO
+     process-execution telemetry (no Sysmon, no EventID 4688), and its OpenVPN + WSL installs
+     only fired stock rule 61138 at L5 — below a typical L10 triage gate. These rules escalate
+     tunnel-client and WSL activity to L10.
+     NOTE: rule 100452 (WSL *execution*) is dormant until Sysmon (EventID 1) is deployed to
+     the Windows agents and the Microsoft-Windows-Sysmon/Operational channel is added to the
+     agent ossec.conf. Validate it with wazuh-logtest once Sysmon is live. -->
+<group name="windows,local,">
+
+  <!-- VPN tunnel client service install (EventID 7045 -> stock 61138). A typical OpenVPN
+       install registers OpenVPN Interactive Service, TAP-Windows Adapter V9 and ovpn-dco in
+       <2s. Tunnel clients on a managed endpoint precede C2/exfil. -->
+  <rule id="100450" level="10">
+    <if_sid>61138</if_sid>
+    <field name="win.eventdata.serviceName" type="pcre2">(?i)openvpn|tap-windows|^ovpn|wireguard</field>
+    <description>VPN tunnel client service installed ($(win.eventdata.serviceName)) — possible protocol tunneling</description>
+    <group>windows,vpn,tunneling,</group>
+    <mitre><id>T1572</id></mitre>
+  </rule>
+
+  <!-- WSL service install (EventID 7045 -> stock 61138). serviceName="WSL Service" observed.
+       WSL creates a full Linux execution environment that the Windows Wazuh agent cannot see
+       inside — any nmap/hydra/gobuster run there is invisible. -->
+  <rule id="100451" level="10">
+    <if_sid>61138</if_sid>
+    <field name="win.eventdata.serviceName" type="pcre2">(?i)^wsl|lxssmanager|wslservice</field>
+    <description>WSL / Linux-subsystem service installed ($(win.eventdata.serviceName)) — creates a Linux exec environment invisible to the Windows agent</description>
+    <group>windows,wsl,</group>
+    <mitre><id>T1202</id></mitre>
+  </rule>
+
+  <!-- ALL WSL execution -> L10 (on a managed endpoint, any WSL use is worth a look). Catches the
+       wsl.exe launcher, the WSL service host, and the bash.exe entrypoint. DORMANT until
+       Sysmon EventID 1 (process creation) is collected — chains off if_group sysmon_event1. -->
+  <rule id="100452" level="10">
+    <if_group>sysmon_event1</if_group>
+    <field name="win.eventdata.image" type="pcre2">(?i)\\(wsl|wslhost|wslservice|wslg)\.exe$|\\bash\.exe$</field>
+    <description>WSL execution on a Windows endpoint — Linux subsystem activity (host process telemetry is blind inside WSL)</description>
+    <group>windows,sysmon,wsl,</group>
+    <mitre><id>T1202</id><id>T1059.004</id></mitre>
+  </rule>
+
+</group>
